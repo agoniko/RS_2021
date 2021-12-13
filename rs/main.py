@@ -17,7 +17,8 @@ import itertools
 from ast import literal_eval
 from keras import backend as K
 from keras.utils import np_utils
-from keras.optimizers import Adam
+from scipy import spatial
+from tensorflow.keras.optimizers import Adam
 from keras.models import load_model
 from keras.callbacks import EarlyStopping
 from keras.models import Sequential, Model
@@ -29,8 +30,11 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.decomposition import TruncatedSVD
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.feature_extraction.text import TfidfVectorizer
+import tensorflow_hub as hub
+import tensorflow_text
 
 from nltk import download as ntdownload
+from tqdm import tqdm
 
 ntdownload('stopwords')
 ntdownload('wordnet')
@@ -132,7 +136,7 @@ class RS:
 
             ### Map back results: very bad behavior here
             self.resource_map_encode_reversed = {value: key for (key, value) in self.resource_map_encode.items()}
-    
+
     ############### Training RS Users ###############
     def _cf_training(self):
         ### Paths + date
@@ -154,7 +158,7 @@ class RS:
                 return 0.9
 
         map_label_vectorized = np.vectorize(map_label)
-        
+
         ### Preparing dataset for training
         user_enc = LabelEncoder()
         self.data_df['userid_enc'] = user_enc.fit_transform(self.data_df['userid'].values)
@@ -240,7 +244,7 @@ class RS:
         self._fetchData(query)
         self._dbDisconnect()
         self._cf_training()  # collaborative filtering su valutazioni
- 
+
 
     ############### Training RS - Content Based ###############
     def _preprocessing(self):
@@ -551,8 +555,54 @@ class RS:
 
         return list(zip(map(str, data), similarity))
 
+    def encode_merlot_metadata(self,txts):
+        try:
+            os.makedirs('resources/encoded_articles')
+        except OSError:
+            print("directory already exists")
+        embed = hub.load("https://tfhub.dev/google/universal-sentence-encoder-multilingual/3")
+        encoded_articles = [embed(txt).numpy()[0] for txt in tqdm(txts)]
+        np.savetxt("resources/encoded_articles/encoded_articles.txt", encoded_articles, delimiter=',')
+        return encoded_articles
 
-### Todo:
+    def get_cosine_similarity(self,encoded_text1, encoded_text2):
+        return 1 - spatial.distance.cosine(encoded_text1, encoded_text2)
+
+    # @safe_run
+    def content_based_merlot_db_cosine(self, text ,n=5):
+        ### Load data
+        self._dbConnect()
+        query = f'SELECT * FROM mdl_merlot_data'
+        self._fetchDataMerlot(query)
+        self._dbDisconnect()
+
+        ###append feature to obtain a unique text
+        df = self.data_keywords_merlot
+        df.reset_index(inplace=True,drop=True)
+        txts = df['disciplines'] + ' ' + df['title'] + ' ' + df['keywords'] + ' ' + df['description']
+
+        ###load or encode encoded_articles
+        try:
+            encoded_txts = np.loadtxt("resources/encoded_articles/encoded_articles.txt", delimiter=',')
+            if(len(encoded_txts) != len(txts)):
+                raise FileNotFoundError
+        except (FileNotFoundError,IOError):
+            print("Encoded resources not found or not up to date, encoding now...")
+            encoded_txts = self.encode_merlot_metadata(txts)
+
+        embed = hub.load("https://tfhub.dev/google/universal-sentence-encoder-multilingual/3")
+        encoded_text = embed(text)
+        df['cosine'] = [self.get_cosine_similarity(encoded_text, encoded_txts[i]) for i in range(len(encoded_txts))]
+        scores = df.sort_values(by='cosine', ascending=False).head(n)
+        scores['cosine'] = scores['cosine'].apply(lambda x: round(x, 3))
+        a = dict(zip(scores['id'], scores['cosine']))
+        print(scores.values)
+        return a
+
+
+
+
+    ### Todo:
 # at loading time, load model (beware of trainings/day changes)
 # add api key for security rezzonz
 # exaustive loggings
@@ -575,6 +625,11 @@ if __name__ == '__main__':
         print('////////////////////////- request received:////////////////////////////////////', req_parameters)
 
         try:
+
+            #####Recommend Cosine#####
+            if req_parameters['type'] == 'cosine':
+                return makeSanicResponse(rs.content_based_merlot_db_cosine(req_parameters['text']))
+
 
             ########## Ping ##########
             if req_parameters['type'] == 'ping':
@@ -627,7 +682,7 @@ if __name__ == '__main__':
             # workers=4,
             # threaded=True,
             # processes=5,
-            ssl={'cert': 'certificates/cert.pem', 'key': 'certificates/privkey.pem'}
+            #ssl={'cert': 'certificates/cert.pem', 'key': 'certificates/privkey.pem'}
         )
 
 
