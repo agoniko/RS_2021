@@ -555,15 +555,26 @@ class RS:
 
         return list(zip(map(str, data), similarity))
 
-    def encode_merlot_metadata(self,txts):
+    def load_or_encode_merlot_metadata(self,txts):
+        ###load or encode encoded_articles
         try:
-            os.makedirs('resources/encoded_articles')
-        except OSError:
-            print("directory already exists")
-        embed = hub.load("https://tfhub.dev/google/universal-sentence-encoder-multilingual/3")
-        encoded_articles = [embed(txt).numpy()[0] for txt in tqdm(txts)]
-        np.savetxt("resources/encoded_articles/encoded_articles.txt", encoded_articles, delimiter=',')
-        return encoded_articles
+            encoded_txts = np.loadtxt("resources/encoded_articles/encoded_articles.txt", delimiter=',')
+            if (len(encoded_txts) != len(txts)):
+                raise FileNotFoundError
+            else:
+                return encoded_txts
+        except (FileNotFoundError, IOError):
+            print("Encoded resources not found or not up to date, encoding now...")
+            try:
+                os.makedirs('resources/encoded_articles')
+            except OSError:
+                print("resources directory already exists")
+            embed = hub.load("https://tfhub.dev/google/universal-sentence-encoder-multilingual/3")
+            encoded_articles = [embed(txt).numpy()[0] for txt in tqdm(txts)]
+            np.savetxt("resources/encoded_articles/encoded_articles.txt", encoded_articles, delimiter=',')
+            return encoded_articles
+
+
 
     def get_cosine_similarity(self,encoded_text1, encoded_text2):
         return 1 - spatial.distance.cosine(encoded_text1, encoded_text2)
@@ -578,22 +589,25 @@ class RS:
 
         ###append feature to obtain a unique text
         df = self.data_keywords_merlot
+        df['disciplines'] = df['disciplines'].apply(lambda x: x.replace('/', ' '))
         df.reset_index(inplace=True,drop=True)
         txts = df['disciplines'] + ' ' + df['title'] + ' ' + df['keywords'] + ' ' + df['description']
+        txts = txts.apply(lambda x: x.lower())
+        txts = txts.apply(lambda x: " ".join(list(set(x.split()))))
 
-        ###load or encode encoded_articles
-        try:
-            encoded_txts = np.loadtxt("resources/encoded_articles/encoded_articles.txt", delimiter=',')
-            if(len(encoded_txts) != len(txts)):
-                raise FileNotFoundError
-        except (FileNotFoundError,IOError):
-            print("Encoded resources not found or not up to date, encoding now...")
-            encoded_txts = self.encode_merlot_metadata(txts)
 
+        ###If the encoding file is up to date the encodings will be loaded in the var, otherwise they will be encoded from the beginning
+        encoded_txts = self.load_or_encode_merlot_metadata(txts)
+
+        ###embedding input text
         embed = hub.load("https://tfhub.dev/google/universal-sentence-encoder-multilingual/3")
         encoded_text = embed(text)
+
+        ###get cosine similarity
         df['cosine'] = [self.get_cosine_similarity(encoded_text, encoded_txts[i]) for i in range(len(encoded_txts))]
         scores = df.sort_values(by='cosine', ascending=False).head(n)
+
+        ###rounding scores and returning results
         scores['cosine'] = scores['cosine'].apply(lambda x: round(x, 3))
         a = dict(zip(scores['id'], scores['cosine']))
         print(scores.values)
@@ -628,7 +642,13 @@ if __name__ == '__main__':
 
             #####Recommend Cosine#####
             if req_parameters['type'] == 'cosine':
-                return makeSanicResponse(rs.content_based_merlot_db_cosine(req_parameters['text']))
+
+                try:
+                    n = int(req_parameters['n'])
+                except KeyError:
+                    n = 5
+                    print(f"n not specified, defaulting to {n}")
+                return makeSanicResponse(rs.content_based_merlot_db_cosine(req_parameters['text'],n))
 
 
             ########## Ping ##########
