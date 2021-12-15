@@ -59,7 +59,7 @@ class RS:
 	def __init__(self):
 		self.debug = False
 
-		self.export_root_path = 'models-deployed/'
+		self.export_root_path = '../resources/models-deployed/'
 		if not os.path.exists(self.export_root_path):
 			os.mkdir(self.export_root_path)
 
