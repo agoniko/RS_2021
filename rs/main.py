@@ -589,6 +589,7 @@ class RS:
                 return embed
             except OSError as error:
                 print("removing damaged directory")
+                print(error.args[0])
                 message = error.args[0]
                 path = message[message.index(':') + 1 : message.index('{')].strip()
                 shutil.rmtree(path)
