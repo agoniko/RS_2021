@@ -23,12 +23,11 @@ from sklearn.decomposition import TruncatedSVD
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.feature_extraction.text import TfidfVectorizer
 import tensorflow_hub as hub
-
+import tensorflow as tf
 from nltk import download as ntdownload
 from tqdm import tqdm
 import shutil
-
-
+import logging
 from src.services.Google_storage_service import Gstorage
 
 ntdownload('stopwords')
@@ -57,7 +56,7 @@ def safe_run(func):
 class RS:
     def __init__(self):
         self.debug = False
-
+        self.tf_hub_path = "resources/tf_hub_model/"
         self.export_root_path = 'resources/models-deployed/'
         if not os.path.exists(self.export_root_path):
             os.mkdir(self.export_root_path)
@@ -584,15 +583,23 @@ class RS:
         embed = None
         while embed == None:
             try:
-                print("loading the model")
-                embed = hub.load("https://tfhub.dev/google/universal-sentence-encoder-multilingual/3")
+                logging.debug("loading the model")
+                embed = hub.load(self.tf_hub_path)
                 return embed
-            except OSError as error:
-                print("removing damaged directory")
-                print(error.args[0])
-                message = error.args[0]
-                path = message[message.index(':') + 1 : message.index('{')].strip()
-                shutil.rmtree(path)
+            except:
+                logging.warning("removing damaged directory")
+                try:
+                    shutil.rmtree(self.tf_hub_path)
+                except OSError:
+                    logging.warning("directory not found")
+
+                logging.debug("downloading the model")
+                embed = hub.load("https://tfhub.dev/google/universal-sentence-encoder-multilingual/3")
+                tf.saved_model.save(embed, self.tf_hub_path)
+                return embed
+
+
+
 
     # @safe_run
     def content_based_merlot_db_cosine(self, text ,n=5):
