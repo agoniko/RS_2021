@@ -583,7 +583,7 @@ class RS:
         embed = None
         while embed == None:
             try:
-                logging.debug("loading the model")
+                logging.warning("trying to load the model")
                 embed = hub.load(self.tf_hub_path)
                 return embed
             except:
