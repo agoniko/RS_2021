@@ -659,6 +659,10 @@ if __name__ == '__main__':
     gstorage = Gstorage()
     gstorage.download_files()
 
+    #the next function is here only for the very first start of the server, then you can delete it
+    rs.load_tf_hub_model()
+
+
     @app.route('/api/rs', methods=['POST','OPTIONS'])
     async def main(request):
 
