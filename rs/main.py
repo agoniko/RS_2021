@@ -1,12 +1,8 @@
 import os
 import re
-import json
 import string
-import logging
-import mimetypes
 import numpy as np
 import pandas as pd
-from base64 import b64decode
 from datetime import datetime
 from collections import OrderedDict
 import keras
@@ -14,31 +10,31 @@ from sanic import Sanic
 from sanic.response import json as sanicjson
 import mysql.connector as mysqldb
 import itertools
-from ast import literal_eval
-from keras import backend as K
-from keras.utils import np_utils
-from keras.optimizers import Adam
+from scipy import spatial
+from tensorflow.keras.optimizers import Adam
 from keras.models import load_model
 from keras.callbacks import EarlyStopping
-from keras.models import Sequential, Model
-from keras.layers import Embedding, Flatten, Dense, Dropout, concatenate, multiply, Input
+from keras.models import Model
+from keras.layers import Embedding, Flatten, Dense, Dropout, concatenate, Input
 
-from sklearn.model_selection import KFold, train_test_split
+from sklearn.model_selection import KFold
 from sklearn.preprocessing import LabelEncoder
-from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.decomposition import TruncatedSVD
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.feature_extraction.text import TfidfVectorizer
-
+import tensorflow_hub as hub
+import tensorflow as tf
 from nltk import download as ntdownload
+from tqdm import tqdm
+import shutil
+import logging
+from src.services.Google_storage_service import Gstorage
 
 ntdownload('stopwords')
 ntdownload('wordnet')
 
 from nltk.corpus import stopwords
-from nltk.stem import LancasterStemmer
 from nltk.stem import WordNetLemmatizer
-from nltk.tokenize import word_tokenize
 from nltk.tokenize import RegexpTokenizer
 
 
@@ -60,8 +56,8 @@ def safe_run(func):
 class RS:
     def __init__(self):
         self.debug = False
-
-        self.export_root_path = 'models-deployed/'
+        self.tf_hub_path = "resources/tf_hub_model/"
+        self.export_root_path = 'resources/models-deployed/'
         if not os.path.exists(self.export_root_path):
             os.mkdir(self.export_root_path)
 
@@ -118,28 +114,29 @@ class RS:
         users = sorted(filter(lambda f: 'users' in f, files))
         resource = sorted(filter(lambda f: 'resource' in f, files))
 
+
         ### Load them
         if len(model):
-            self.latest_model = load_model(self.export_root_path + model[-1])
+            self.latest_model = load_model(self.export_root_path + model[0])
 
         if len(users):
-            self.user_map_encode = pd.read_csv(self.export_root_path + users[-1])
+            self.user_map_encode = pd.read_csv(self.export_root_path + users[0])
             self.user_map_encode = dict(self.user_map_encode.values)
 
         if len(resource):
-            self.resource_map_encode = pd.read_csv(self.export_root_path + resource[-1])
+            self.resource_map_encode = pd.read_csv(self.export_root_path + resource[0])
             self.resource_map_encode = dict(self.resource_map_encode.values)
 
             ### Map back results: very bad behavior here
             self.resource_map_encode_reversed = {value: key for (key, value) in self.resource_map_encode.items()}
-    
+
     ############### Training RS Users ###############
     def _cf_training(self):
         ### Paths + date
-        base_path = self.export_root_path + now()
-        model_filepath = base_path + '-model-ratings.h5'
-        usersdict_filepath = base_path + '-users-dict-encoded.csv'
-        resourcedict_filepath = base_path + '-resource-dict-encoded.csv'
+        base_path = self.export_root_path
+        model_filepath = base_path + 'model-ratings.h5'
+        usersdict_filepath = base_path + 'users-dict-encoded.csv'
+        resourcedict_filepath = base_path + 'resource-dict-encoded.csv'
 
         def map_label(x):
             if x == 1:
@@ -154,7 +151,7 @@ class RS:
                 return 0.9
 
         map_label_vectorized = np.vectorize(map_label)
-        
+
         ### Preparing dataset for training
         user_enc = LabelEncoder()
         self.data_df['userid_enc'] = user_enc.fit_transform(self.data_df['userid'].values)
@@ -230,6 +227,9 @@ class RS:
         ### Locally save model
         model_c.save(model_filepath)
 
+        gstorage = Gstorage()
+        gstorage.upload_model_and_csv()
+
         ### Update current model
         self._load_mappings()
 
@@ -240,7 +240,7 @@ class RS:
         self._fetchData(query)
         self._dbDisconnect()
         self._cf_training()  # collaborative filtering su valutazioni
- 
+
 
     ############### Training RS - Content Based ###############
     def _preprocessing(self):
@@ -551,6 +551,96 @@ class RS:
 
         return list(zip(map(str, data), similarity))
 
+    def load_or_encode_merlot_metadata(self,txts):
+        ###load or encode encoded_articles
+        gstorage = Gstorage()
+        try:
+            gstorage.download_file("encoded_articles/encoded_articles.txt", "resources/encoded_articles/encoded_articles.txt")
+            encoded_txts = np.loadtxt("resources/encoded_articles/encoded_articles.txt", delimiter=',')
+            if (len(encoded_txts) != len(txts)):
+                raise FileNotFoundError
+            else:
+                return encoded_txts
+        except (FileNotFoundError, IOError):
+            print("Encoded resources not found or not up to date, encoding now...")
+            try:
+                os.makedirs('resources/encoded_articles')
+            except OSError:
+                print("resources directory already exists")
+            embed = self.load_tf_hub_model()
+            encoded_articles = [embed(txt).numpy()[0] for txt in tqdm(txts)]
+            np.savetxt("resources/encoded_articles/encoded_articles.txt", encoded_articles, delimiter=',')
+            gstorage.upload_file("encoded_articles/encoded_articles.txt", "resources/encoded_articles/encoded_articles.txt")
+            return encoded_articles
+
+
+
+    def get_cosine_similarity(self,encoded_text1, encoded_text2):
+        return 1 - spatial.distance.cosine(encoded_text1, encoded_text2)
+
+
+    def load_tf_hub_model(self):
+        embed = None
+        while embed == None:
+            try:
+                logging.debug("trying to load the model")
+                embed = hub.load(self.tf_hub_path)
+                logging.debug("model loaded")
+                return embed
+            except:
+                logging.warning("removing damaged directory")
+                try:
+                    shutil.rmtree(self.tf_hub_path)
+                except OSError:
+                    logging.warning("directory not found")
+
+                logging.warning("downloading the model")
+                embed = hub.load("https://tfhub.dev/google/universal-sentence-encoder-multilingual/3")
+                tf.saved_model.save(embed, self.tf_hub_path)
+                logging.warning("model downloaded and saved in " + self.tf_hub_path)
+                return embed
+
+
+
+
+    # @safe_run
+    def content_based_merlot_db_cosine(self, text ,n=5):
+
+        if type(text) == list:
+            text = ' '.join(text)
+
+        ### Load data
+        self._dbConnect()
+        query = f'SELECT * FROM mdl_merlot_data'
+        self._fetchDataMerlot(query)
+        self._dbDisconnect()
+
+        ###append feature to obtain a unique text
+        df = self.data_keywords_merlot
+        df['disciplines'] = df['disciplines'].apply(lambda x: x.replace('/', ' '))
+        df.reset_index(inplace=True,drop=True)
+        txts = df['disciplines'] + ' ' + df['title'] + ' ' + df['keywords'] + ' ' + df['description']
+        txts = txts.apply(lambda x: x.lower())
+        txts = txts.apply(lambda x: " ".join(list(set(x.split()))))
+
+
+        ###If the encoding file is up to date the encodings will be loaded in the var, otherwise they will be encoded from the beginning
+        encoded_txts = self.load_or_encode_merlot_metadata(txts)
+
+        ###embedding input text
+        embed = self.load_tf_hub_model()
+        encoded_text = embed(text)
+
+        ###get cosine similarity
+        df['cosine'] = [self.get_cosine_similarity(encoded_text, encoded_txts[i]) for i in range(len(encoded_txts))]
+        scores = df.sort_values(by='cosine', ascending=False).head(n)
+        ###rounding scores and returning results
+        scores['cosine'] = scores['cosine'].apply(lambda x: round(x, 3))
+
+        return dict(zip(scores['id'], scores['cosine']))
+
+
+
 
 ### Todo:
 # at loading time, load model (beware of trainings/day changes)
@@ -566,7 +656,8 @@ def makeSanicResponse(resp):
 if __name__ == '__main__':
     rs = RS()
     app = Sanic('STRS')
-
+    gstorage = Gstorage()
+    gstorage.download_files()
 
     @app.route('/api/rs', methods=['POST','OPTIONS'])
     async def main(request):
@@ -575,6 +666,17 @@ if __name__ == '__main__':
         print('////////////////////////- request received:////////////////////////////////////', req_parameters)
 
         try:
+
+            #####Recommend Cosine#####
+            if req_parameters['type'] == 'cosine':
+
+                try:
+                    n = int(req_parameters['n'])
+                except KeyError:
+                    n = 5
+                    print(f"n not specified, defaulting to {n}")
+                return makeSanicResponse(rs.content_based_merlot_db_cosine(req_parameters['keywords'],n))
+
 
             ########## Ping ##########
             if req_parameters['type'] == 'ping':
@@ -627,7 +729,7 @@ if __name__ == '__main__':
             # workers=4,
             # threaded=True,
             # processes=5,
-            ssl={'cert': 'certificates/cert.pem', 'key': 'certificates/privkey.pem'}
+            #ssl={'cert': 'certificates/cert.pem', 'key': 'certificates/privkey.pem'}
         )
 
 
