@@ -583,8 +583,9 @@ class RS:
         embed = None
         while embed == None:
             try:
-                logging.warning("trying to load the model")
+                logging.debug("trying to load the model")
                 embed = hub.load(self.tf_hub_path)
+                logging.debug("model loaded")
                 return embed
             except:
                 logging.warning("removing damaged directory")
@@ -593,9 +594,10 @@ class RS:
                 except OSError:
                     logging.warning("directory not found")
 
-                logging.debug("downloading the model")
+                logging.warning("downloading the model")
                 embed = hub.load("https://tfhub.dev/google/universal-sentence-encoder-multilingual/3")
                 tf.saved_model.save(embed, self.tf_hub_path)
+                logging.warning("model downloaded and saved in " + self.tf_hub_path)
                 return embed
 
 
