@@ -28,7 +28,10 @@ The package folder is organised as follows:
 
 
 ## Deployment steps
-1. in a linux terminal execute the following commands:
+1. Install the [Google SDK](https://cloud.google.com/sdk/docs/install)
+2. Install [Docker](https://docs.docker.com/engine/install)
+
+3. in a linux terminal execute the following commands:
   * **gcloud auth login**: this command will open a browser and ask you to authenticate with your Google account
   * **gcloud auth configure-docker**: this command will configure the docker authentication
   * **sudo chmod 666 /var/run/docker.sock**: this command will allow the docker daemon to write to the socket
