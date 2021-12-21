@@ -82,6 +82,7 @@ class RS:
         self.data_df = None
 
         self._load_mappings()
+        self.embed = self.load_tf_hub_model()
 
     def _dbConnect(self):
         self.dbconn = mysqldb.connect(**self.db_params)
@@ -273,6 +274,11 @@ class RS:
         latent_matrix = svd.fit_transform(feature_matrix)
         latent_df = pd.DataFrame(latent_matrix, index=feature_matrix.index.tolist())
         return latent_df
+
+    def _get_svd_embeddingsv2(self, feature_matrix, n):
+        svd = TruncatedSVD(n_components=n)
+        latent_matrix = svd.fit_transform(feature_matrix)
+        return latent_matrix
 
     # restituisce l'ID delle risorse
     def _recommender_cb(self, matrix, n):
@@ -567,8 +573,7 @@ class RS:
                 os.makedirs('resources/encoded_articles')
             except OSError:
                 print("resources directory already exists")
-            embed = self.load_tf_hub_model()
-            encoded_articles = [embed(txt).numpy()[0] for txt in tqdm(txts)]
+            encoded_articles = [self.embed(txt).numpy()[0] for txt in tqdm(txts)]
             np.savetxt("resources/encoded_articles/encoded_articles_merlot.txt", encoded_articles, delimiter=',')
             gstorage.upload_file("encoded_articles/encoded_articles_merlot.txt", "resources/encoded_articles/encoded_articles_merlot.txt")
             return encoded_articles
@@ -589,8 +594,7 @@ class RS:
                 os.makedirs('resources/encoded_articles')
             except OSError:
                 print("resources directory already exists")
-            embed = self.load_tf_hub_model()
-            encoded_articles = [embed(txt).numpy()[0] for txt in tqdm(txts)]
+            encoded_articles = [self.embed(txt).numpy()[0] for txt in tqdm(txts)]
             np.savetxt("resources/encoded_articles/encoded_articles_weeschol.txt", encoded_articles, delimiter=',')
             gstorage.upload_file("encoded_articles/encoded_articles_weeschol.txt",
                                  "resources/encoded_articles/encoded_articles_weeschol.txt")
@@ -602,13 +606,13 @@ class RS:
 
 
     def load_tf_hub_model(self):
-        embed = None
-        while embed == None:
+        self.embed = None
+        while self.embed == None:
             try:
                 logging.debug("trying to load the model")
-                embed = hub.load(self.tf_hub_path)
+                self.embed = hub.load(self.tf_hub_path)
                 logging.debug("model loaded")
-                return embed
+                return self.embed
             except:
                 logging.warning("removing damaged directory")
                 try:
@@ -617,10 +621,10 @@ class RS:
                     logging.warning("directory not found")
 
                 logging.warning("downloading the model")
-                embed = hub.load("https://tfhub.dev/google/universal-sentence-encoder-multilingual/3")
-                tf.saved_model.save(embed, self.tf_hub_path)
+                self.embed = hub.load("https://tfhub.dev/google/universal-sentence-encoder-multilingual/3")
+                tf.saved_model.save(self.embed, self.tf_hub_path)
                 logging.warning("model downloaded and saved in " + self.tf_hub_path)
-                return embed
+                return self.embed
 
     def content_based_weschool_db_cosine(self,text, n = 5):
 
@@ -644,18 +648,23 @@ class RS:
         txts = txts.apply(lambda x: " ".join(list(set(x.split()))))
 
         ###If the encoding file is up to date the encodings will be loaded in the var, otherwise they will be encoded from the beginning
+        svd_dimension = 100
         encoded_txts = self.load_or_encode_weschool_metadata(txts)
-        #encoded_txts = self._get_svd_embeddings(encoded_txts.numpy()[0], 100)
-        ###embedding input text
-        embed = self.load_tf_hub_model()
-        encoded_text = embed(text).numpy()[0]
+
+        ###encode text received
+        encoded_text = self.embed(text).numpy()[0]
+
+        encoded_txts = concatenate((encoded_txts, encoded_text.reshape(1, 512)), axis=0).numpy()
+        encoded_txts = self._get_svd_embeddingsv2(encoded_txts, svd_dimension)
 
         ###get cosine similarity
-        df['cosine'] = [self.get_cosine_similarity(encoded_text, encoded_txts[i]) for i in range(len(encoded_txts))]
+        df['cosine'] = [self.get_cosine_similarity(encoded_txts[len(encoded_txts) - 1], encoded_txts[i]) for i in
+                        range(len(encoded_txts) - 1)]
         scores = df.sort_values(by='cosine', ascending=False).head(n)
         ###rounding scores and returning results
         scores['cosine'] = scores['cosine'].apply(lambda x: round(x, 3))
         scores = scores[scores['cosine'] > 0.25]
+
         return dict(zip(scores['id'], scores['cosine']))
 
 
@@ -680,16 +689,19 @@ class RS:
         txts = txts.apply(lambda x: x.lower())
         txts = txts.apply(lambda x: " ".join(list(set(x.split()))))
 
-
         ###If the encoding file is up to date the encodings will be loaded in the var, otherwise they will be encoded from the beginning
+        svd_dimension = 100
         encoded_txts = self.load_or_encode_merlot_metadata(txts)
 
-        ###embedding input text
-        embed = self.load_tf_hub_model()
-        encoded_text = embed(text)
+        ###encode text received
+        encoded_text = self.embed(text).numpy()[0]
+
+        encoded_txts = concatenate((encoded_txts,encoded_text.reshape(1,512)),axis = 0).numpy()
+        encoded_txts = self._get_svd_embeddingsv2(encoded_txts, svd_dimension)
 
         ###get cosine similarity
-        df['cosine'] = [self.get_cosine_similarity(encoded_text, encoded_txts[i]) for i in range(len(encoded_txts))]
+        df['cosine'] = [self.get_cosine_similarity(encoded_txts[len(encoded_txts)-1], encoded_txts[i]) for i in
+                        range(len(encoded_txts)-1)]
         scores = df.sort_values(by='cosine', ascending=False).head(n)
         ###rounding scores and returning results
         scores['cosine'] = scores['cosine'].apply(lambda x: round(x, 3))
