@@ -626,7 +626,7 @@ class RS:
                 logging.warning("model downloaded and saved in " + self.tf_hub_path)
                 return self.embed
 
-    def content_based_weschool_db_cosine(self,text, n = 5):
+    def content_based_weschool_db_cosine(self,text, n = 5, soglia = 0.5):
 
         if type(text) == list:
             text = ' '.join(text)
@@ -637,13 +637,15 @@ class RS:
         self._fetchDataWS(query)
         self._dbDisconnect()
         ### Insert user profile in dataset keywords
-        self.data_keywords_ws = self.data_keywords_ws[['id', 'keywords']]
+        self.data_keywords_ws = self.data_keywords_ws[['id', 'description', 'title']]
 
         ### Preprocessing keywords
         ###append feature to obtain a unique text
         df = self.data_keywords_ws
         df.reset_index(inplace=True, drop=True)
-        txts = df['keywords']
+        #if df['description'].isna() == true then df['description'] = ' '
+        df['description'] = df['description'].fillna(' ')
+        txts = df['description'] + ' ' + df['title']
         txts = txts.apply(lambda x: x.lower())
         txts = txts.apply(lambda x: " ".join(list(set(x.split()))))
 
@@ -652,25 +654,26 @@ class RS:
         encoded_txts = self.load_or_encode_weschool_metadata(txts)
 
         ###encode text received
-        encoded_text = self.embed(text).numpy()[0]
+        encoded_text = self.embed(text).numpy()
 
-        encoded_txts = concatenate((encoded_txts, encoded_text.reshape(1, 512)), axis=0).numpy()
+        ###reducing dimensionality
+        encoded_text = self._get_svd_embeddingsv2(encoded_text, svd_dimension)
         encoded_txts = self._get_svd_embeddingsv2(encoded_txts, svd_dimension)
 
         ###get cosine similarity
-        df['cosine'] = [self.get_cosine_similarity(encoded_txts[len(encoded_txts) - 1], encoded_txts[i]) for i in
-                        range(len(encoded_txts) - 1)]
+        df['cosine'] = [self.get_cosine_similarity(encoded_text, encoded_txts[i]) for i in
+                        range(len(encoded_txts))]
         scores = df.sort_values(by='cosine', ascending=False).head(n)
         ###rounding scores and returning results
         scores['cosine'] = scores['cosine'].apply(lambda x: round(x, 3))
-        scores = scores[scores['cosine'] > 0.25]
-
+        scores = scores[scores['cosine'] > soglia]
+        print(scores.values)
         return dict(zip(scores['id'], scores['cosine']))
 
 
 
     # @safe_run
-    def content_based_merlot_db_cosine(self, text ,n=3):
+    def content_based_merlot_db_cosine(self, text ,n=3, soglia = 0.5):
 
         if type(text) == list:
             text = ' '.join(text)
@@ -694,19 +697,20 @@ class RS:
         encoded_txts = self.load_or_encode_merlot_metadata(txts)
 
         ###encode text received
-        encoded_text = self.embed(text).numpy()[0]
+        encoded_text = self.embed(text).numpy()
 
-        encoded_txts = concatenate((encoded_txts,encoded_text.reshape(1,512)),axis = 0).numpy()
+        ###reducing dimensionality
+        encoded_text = self._get_svd_embeddingsv2(encoded_text, svd_dimension)
         encoded_txts = self._get_svd_embeddingsv2(encoded_txts, svd_dimension)
 
         ###get cosine similarity
-        df['cosine'] = [self.get_cosine_similarity(encoded_txts[len(encoded_txts)-1], encoded_txts[i]) for i in
-                        range(len(encoded_txts)-1)]
+        df['cosine'] = [self.get_cosine_similarity(encoded_text, encoded_txts[i]) for i in
+                        range(len(encoded_txts))]
         scores = df.sort_values(by='cosine', ascending=False).head(n)
         ###rounding scores and returning results
         scores['cosine'] = scores['cosine'].apply(lambda x: round(x, 3))
-        scores = scores[scores['cosine'] > 0.25]
-
+        scores = scores[scores['cosine'] > soglia]
+        print(scores.values)
         return dict(zip(scores['id'], scores['cosine']))
 
 
@@ -768,8 +772,8 @@ if __name__ == '__main__':
                 ### merlot
                 print("********* avvio raccomandazione *********");
                 #cb_merlot = rs.content_based_merlot_db(req_parameters['keywords'], 2)
-                cb_merlot = rs.content_based_merlot_db_cosine(req_parameters['keywords'], 3)
-                cb_ws = rs.content_based_weschool_db_cosine(req_parameters['keywords'], 3)
+                cb_merlot = rs.content_based_merlot_db_cosine(req_parameters['keywords'], 3, 0)
+                cb_ws = rs.content_based_weschool_db_cosine(req_parameters['keywords'], 3, 0)
                 print("********** we school **********")
                 #print(cb_ws)
 
