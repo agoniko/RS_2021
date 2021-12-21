@@ -555,8 +555,8 @@ class RS:
         ###load or encode encoded_articles
         gstorage = Gstorage()
         try:
-            gstorage.download_file("encoded_articles/encoded_articles.txt", "resources/encoded_articles/encoded_articles.txt")
-            encoded_txts = np.loadtxt("resources/encoded_articles/encoded_articles.txt", delimiter=',')
+            gstorage.download_file("encoded_articles/encoded_articles_merlot.txt", "resources/encoded_articles/encoded_articles_merlot.txt")
+            encoded_txts = np.loadtxt("resources/encoded_articles/encoded_articles_merlot.txt", delimiter=',')
             if (len(encoded_txts) != len(txts)):
                 raise FileNotFoundError
             else:
@@ -569,10 +569,32 @@ class RS:
                 print("resources directory already exists")
             embed = self.load_tf_hub_model()
             encoded_articles = [embed(txt).numpy()[0] for txt in tqdm(txts)]
-            np.savetxt("resources/encoded_articles/encoded_articles.txt", encoded_articles, delimiter=',')
-            gstorage.upload_file("encoded_articles/encoded_articles.txt", "resources/encoded_articles/encoded_articles.txt")
+            np.savetxt("resources/encoded_articles/encoded_articles_merlot.txt", encoded_articles, delimiter=',')
+            gstorage.upload_file("encoded_articles/encoded_articles_merlot.txt", "resources/encoded_articles/encoded_articles_merlot.txt")
             return encoded_articles
 
+    def load_or_encode_weschool_metadata(self,txts):
+        gstorage = Gstorage()
+        try:
+            gstorage.download_file("encoded_articles/encoded_articles_weeschol.txt",
+                                   "resources/encoded_articles/encoded_articles_weeschol.txt")
+            encoded_txts = np.loadtxt("resources/encoded_articles/encoded_articles_weeschol.txt", delimiter=',')
+            if (len(encoded_txts) != len(txts)):
+                raise FileNotFoundError
+            else:
+                return encoded_txts
+        except (FileNotFoundError, IOError):
+            print("Encoded resources not found or not up to date, encoding now...")
+            try:
+                os.makedirs('resources/encoded_articles')
+            except OSError:
+                print("resources directory already exists")
+            embed = self.load_tf_hub_model()
+            encoded_articles = [embed(txt).numpy()[0] for txt in tqdm(txts)]
+            np.savetxt("resources/encoded_articles/encoded_articles_weeschol.txt", encoded_articles, delimiter=',')
+            gstorage.upload_file("encoded_articles/encoded_articles_weeschol.txt",
+                                 "resources/encoded_articles/encoded_articles_weeschol.txt")
+            return encoded_articles
 
 
     def get_cosine_similarity(self,encoded_text1, encoded_text2):
@@ -600,11 +622,46 @@ class RS:
                 logging.warning("model downloaded and saved in " + self.tf_hub_path)
                 return embed
 
+    def content_based_weschool_db_cosine(self,text, n = 5):
+
+        if type(text) == list:
+            text = ' '.join(text)
+
+        ### Load data
+        self._dbConnect()
+        query = f'SELECT * FROM mdl_weschool_data'
+        self._fetchDataWS(query)
+        self._dbDisconnect()
+        ### Insert user profile in dataset keywords
+        self.data_keywords_ws = self.data_keywords_ws[['id', 'keywords']]
+
+        ### Preprocessing keywords
+        ###append feature to obtain a unique text
+        df = self.data_keywords_ws
+        df.reset_index(inplace=True, drop=True)
+        txts = df['keywords']
+        txts = txts.apply(lambda x: x.lower())
+        txts = txts.apply(lambda x: " ".join(list(set(x.split()))))
+
+        ###If the encoding file is up to date the encodings will be loaded in the var, otherwise they will be encoded from the beginning
+        encoded_txts = self.load_or_encode_weschool_metadata(txts)
+        #encoded_txts = self._get_svd_embeddings(encoded_txts.numpy()[0], 100)
+        ###embedding input text
+        embed = self.load_tf_hub_model()
+        encoded_text = embed(text).numpy()[0]
+
+        ###get cosine similarity
+        df['cosine'] = [self.get_cosine_similarity(encoded_text, encoded_txts[i]) for i in range(len(encoded_txts))]
+        scores = df.sort_values(by='cosine', ascending=False).head(n)
+        ###rounding scores and returning results
+        scores['cosine'] = scores['cosine'].apply(lambda x: round(x, 3))
+        scores = scores[scores['cosine'] > 0.25]
+        return dict(zip(scores['id'], scores['cosine']))
 
 
 
     # @safe_run
-    def content_based_merlot_db_cosine(self, text ,n=5):
+    def content_based_merlot_db_cosine(self, text ,n=3):
 
         if type(text) == list:
             text = ' '.join(text)
@@ -636,6 +693,7 @@ class RS:
         scores = df.sort_values(by='cosine', ascending=False).head(n)
         ###rounding scores and returning results
         scores['cosine'] = scores['cosine'].apply(lambda x: round(x, 3))
+        scores = scores[scores['cosine'] > 0.25]
 
         return dict(zip(scores['id'], scores['cosine']))
 
@@ -697,8 +755,9 @@ if __name__ == '__main__':
 
                 ### merlot
                 print("********* avvio raccomandazione *********");
-                cb_merlot = rs.content_based_merlot_db(req_parameters['keywords'], 2)
-                cb_ws = rs.content_based_weschool_db(req_parameters['keywords'], 2)
+                #cb_merlot = rs.content_based_merlot_db(req_parameters['keywords'], 2)
+                cb_merlot = rs.content_based_merlot_db_cosine(req_parameters['keywords'], 3)
+                cb_ws = rs.content_based_weschool_db_cosine(req_parameters['keywords'], 3)
                 print("********** we school **********")
                 #print(cb_ws)
 
