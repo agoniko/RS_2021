@@ -29,6 +29,7 @@ from tqdm import tqdm
 import shutil
 import logging
 from src.services.Google_storage_service import Gstorage
+from scipy.interpolate import interp1d
 
 ntdownload('stopwords')
 ntdownload('wordnet')
@@ -601,8 +602,12 @@ class RS:
             return encoded_articles
 
 
-    def get_cosine_similarity(self,encoded_text1, encoded_text2):
-        return 1 - spatial.distance.cosine(encoded_text1, encoded_text2)
+    def get_cosine_similarity(self,a, b):
+        from numpy import dot
+        from numpy.linalg import norm
+        cos_sim = dot(a, b) / (norm(a) * norm(b))
+        cos_sim = (cos_sim + 1)/ 2
+        return cos_sim
 
 
     def load_tf_hub_model(self):
@@ -617,6 +622,10 @@ class RS:
                 logging.warning("removing damaged directory")
                 try:
                     shutil.rmtree(self.tf_hub_path)
+                except OSError:
+                    logging.warning("directory not found")
+                try:
+                    shutil.rmtree("/tmp/tfhub_modules")
                 except OSError:
                     logging.warning("directory not found")
 
@@ -637,15 +646,15 @@ class RS:
         self._fetchDataWS(query)
         self._dbDisconnect()
         ### Insert user profile in dataset keywords
-        self.data_keywords_ws = self.data_keywords_ws[['id', 'description', 'title']]
+        self.data_keywords_ws = self.data_keywords_ws[['id', 'description', 'title', 'keywords']]
 
         ### Preprocessing keywords
         ###append feature to obtain a unique text
         df = self.data_keywords_ws
         df.reset_index(inplace=True, drop=True)
         #if df['description'].isna() == true then df['description'] = ' '
-        df['description'] = df['description'].fillna(' ')
-        txts = df['description'] + ' ' + df['title']
+        #df['description'] = df['description'].fillna(' ')
+        txts = df['keywords'] + ' ' + df['title']
         txts = txts.apply(lambda x: x.lower())
         txts = txts.apply(lambda x: " ".join(list(set(x.split()))))
 
@@ -655,14 +664,17 @@ class RS:
 
         ###encode text received
         encoded_text = self.embed(text).numpy()
+        encoded_txts = np.r_[encoded_txts, encoded_text]
 
         ###reducing dimensionality
-        encoded_text = self._get_svd_embeddingsv2(encoded_text, svd_dimension)
+        #encoded_text = self._get_svd_embeddingsv2(encoded_text, svd_dimension)
         encoded_txts = self._get_svd_embeddingsv2(encoded_txts, svd_dimension)
-
+        index = len(encoded_txts) - 1
         ###get cosine similarity
-        df['cosine'] = [self.get_cosine_similarity(encoded_text, encoded_txts[i]) for i in
-                        range(len(encoded_txts))]
+        df['cosine'] = [self.get_cosine_similarity(encoded_txts[index], encoded_txts[i]) for i in
+                        range(index)]
+
+
         scores = df.sort_values(by='cosine', ascending=False).head(n)
         ###rounding scores and returning results
         scores['cosine'] = scores['cosine'].apply(lambda x: round(x, 3))
@@ -698,14 +710,16 @@ class RS:
 
         ###encode text received
         encoded_text = self.embed(text).numpy()
+        encoded_txts = np.r_[encoded_txts, encoded_text]
 
         ###reducing dimensionality
-        encoded_text = self._get_svd_embeddingsv2(encoded_text, svd_dimension)
+        # encoded_text = self._get_svd_embeddingsv2(encoded_text, svd_dimension)
         encoded_txts = self._get_svd_embeddingsv2(encoded_txts, svd_dimension)
-
+        index = len(encoded_txts) - 1
         ###get cosine similarity
-        df['cosine'] = [self.get_cosine_similarity(encoded_text, encoded_txts[i]) for i in
-                        range(len(encoded_txts))]
+        df['cosine'] = [self.get_cosine_similarity(encoded_txts[index], encoded_txts[i]) for i in
+                        range(index)]
+
         scores = df.sort_values(by='cosine', ascending=False).head(n)
         ###rounding scores and returning results
         scores['cosine'] = scores['cosine'].apply(lambda x: round(x, 3))
@@ -772,8 +786,8 @@ if __name__ == '__main__':
                 ### merlot
                 print("********* avvio raccomandazione *********");
                 #cb_merlot = rs.content_based_merlot_db(req_parameters['keywords'], 2)
-                cb_merlot = rs.content_based_merlot_db_cosine(req_parameters['keywords'], 3, 0)
-                cb_ws = rs.content_based_weschool_db_cosine(req_parameters['keywords'], 3, 0)
+                cb_merlot = rs.content_based_merlot_db_cosine(req_parameters['keywords'], 3, 0.7)
+                cb_ws = rs.content_based_weschool_db_cosine(req_parameters['keywords'], 3, 0.7)
                 print("********** we school **********")
                 #print(cb_ws)
 
