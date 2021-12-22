@@ -10,7 +10,6 @@ from sanic import Sanic
 from sanic.response import json as sanicjson
 import mysql.connector as mysqldb
 import itertools
-from scipy import spatial
 from tensorflow.keras.optimizers import Adam
 from keras.models import load_model
 from keras.callbacks import EarlyStopping
@@ -29,7 +28,9 @@ from tqdm import tqdm
 import shutil
 import logging
 from src.services.Google_storage_service import Gstorage
-from scipy.interpolate import interp1d
+from numpy import dot
+from numpy.linalg import norm
+
 
 ntdownload('stopwords')
 ntdownload('wordnet')
@@ -603,8 +604,6 @@ class RS:
 
 
     def get_cosine_similarity(self,a, b):
-        from numpy import dot
-        from numpy.linalg import norm
         cos_sim = dot(a, b) / (norm(a) * norm(b))
         cos_sim = (cos_sim + 1)/ 2
         return cos_sim
