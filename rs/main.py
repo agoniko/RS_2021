@@ -678,7 +678,6 @@ class RS:
         ###rounding scores and returning results
         scores['cosine'] = scores['cosine'].apply(lambda x: round(x, 3))
         scores = scores[scores['cosine'] > soglia]
-        print(scores.values)
         return dict(zip(scores['id'], scores['cosine']))
 
 
@@ -723,7 +722,6 @@ class RS:
         ###rounding scores and returning results
         scores['cosine'] = scores['cosine'].apply(lambda x: round(x, 3))
         scores = scores[scores['cosine'] > soglia]
-        print(scores.values)
         return dict(zip(scores['id'], scores['cosine']))
 
 
