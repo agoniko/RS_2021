@@ -2,6 +2,11 @@
 
 ## In this branch we join the results coming form CF, CB and the semantic similarity between texts
 
+* **Objective** This is the backend of the WhoTeach Recommender System.
+* **Frameworks:** Sanic, Cloud Run, Docker
+
+
+
 ## Production endpoint
 * https://whoteach-dev-vjywjfifqq-ew.a.run.app/api/rs
 
@@ -13,23 +18,14 @@
 * curl -X POST -d '{"type":"training"}' http://localhost:5001/api/rs
 * curl -X POST -d '{"type":"training"}' https://whoteach-dev-vjywjfifqq-ew.a.run.app/api/rs
 
-## Request recommendation
-* curl -X POST -d '{"type":"recommend","userid":2}' http://localhost:5001/api/rs
-* curl -X POST -d '{"type":"recommend","userid":2}' https://whoteach-dev-vjywjfifqq-ew.a.run.app/api/rs
 
 ## Recommendation by keywords
-* curl -X POST -d '{"type":"recommend","userid":2, "keywords":["book","libri"]}' http://localhost:5001/api/rs
-* curl -X POST -d '{"type":"recommend","userid":2, "keywords":["book","libri"]}' https://whoteach-dev-vjywjfifqq-ew.a.run.app/api/rs
+* curl -X POST -d '{"type":"recommend","userid":2, "keywords":["book","libri"], "usersid":["205"]}' http://localhost:5001/api/rs
+* curl -X POST -d '{"type":"recommend","userid":2, "keywords":["book","libri"], "usersid":["205"]}' https://whoteach-dev-vjywjfifqq-ew.a.run.app/api/rs
 
 ## Recommendation by keywords based on semantic similarity between texts
 * curl -X POST -d '{"type":"cosine", "keywords":["book","libri"], "n":5}' http://localhost:5001/api/rs
 * curl -X POST -d '{"type":"cosine", "keywords":["book","libri"], "n":5}' https://whoteach-dev-vjywjfifqq-ew.a.run.app/api/rs
-
-
-
-
-* **Objective** This is the backend of the WhoTeach Recommender System.
-* **Frameworks:** Sanic, Cloud Run, Docker
 
 
 ## Package Structure
